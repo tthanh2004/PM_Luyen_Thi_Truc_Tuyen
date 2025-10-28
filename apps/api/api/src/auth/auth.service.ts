@@ -117,7 +117,6 @@ export class AuthService {
       expiresIn: process.env.JWT_EXPIRES_IN ?? '30m',
     };
 
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-argument
     return this.jwt.signAsync(payload, options);
   }
 }

@@ -26,4 +26,15 @@ export async function loginUser(data: {
   return res.data; // { user, accessToken }
 }
 
+// Lấy danh sách đề thi
+export async function fetchExams() {
+  const res = await api.get('/exams');
+  return res.data; // array exams
+}
+
+export async function fetchExamQuestions(examId: number) {
+  const res = await api.get(`/questions/exam/${examId}`);
+  return res.data; // { exam, questions: [...] }
+}
+
 export default api;
