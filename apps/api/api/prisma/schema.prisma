@@ -7,18 +7,105 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+// ----------------- USER -----------------
 model User {
-  id        Int      @id @default(autoincrement())
-  email     String   @unique
+  id        Int       @id @default(autoincrement())
+  email     String    @unique
   password  String
   fullName  String
-  role      Role     @default(STUDENT)
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  role      Role      @default(STUDENT)
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  // Quan hệ ngược
+  examsCreated Exam[]      @relation("UserCreatedExams")
+  attempts     Attempt[]
 }
 
+// ----------------- EXAM -----------------
+model Exam {
+  id          Int       @id @default(autoincrement())
+  title       String
+  description String?
+  durationMin Int        // thời lượng làm bài (phút)
+  createdById Int
+  createdAt   DateTime   @default(now())
+
+  // người tạo đề thi (giáo viên / admin)
+  createdBy   User       @relation("UserCreatedExams", fields: [createdById], references: [id])
+
+  // câu hỏi thuộc đề
+  questions   Question[]
+
+  // các lần làm bài của học viên trên đề này
+  attempts    Attempt[]
+}
+
+// ----------------- QUESTION -----------------
+model Question {
+  id        Int          @id @default(autoincrement())
+  examId    Int
+  content   String
+  type      QuestionType @default(MCQ)
+
+  exam      Exam         @relation(fields: [examId], references: [id])
+  options   Option[]
+  answers   Answer[]
+}
+
+// ----------------- OPTION -----------------
+model Option {
+  id         Int       @id @default(autoincrement())
+  questionId Int
+  text       String
+  isCorrect  Boolean   @default(false)
+
+  question   Question  @relation(fields: [questionId], references: [id])
+}
+
+// ----------------- ATTEMPT -----------------
+model Attempt {
+  id          Int            @id @default(autoincrement())
+  userId      Int
+  examId      Int
+  startedAt   DateTime       @default(now())
+  submittedAt DateTime?
+  score       Float?
+  status      AttemptStatus  @default(IN_PROGRESS)
+
+  user        User           @relation(fields: [userId], references: [id])
+  exam        Exam           @relation(fields: [examId], references: [id])
+  answers     Answer[]
+}
+
+// ----------------- ANSWER -----------------
+model Answer {
+  id               Int       @id @default(autoincrement())
+  attemptId        Int
+  questionId       Int
+  selectedOptionId Int?
+  textAnswer       String?
+  isCorrect        Boolean?
+  score            Float?
+
+  attempt    Attempt   @relation(fields: [attemptId], references: [id])
+  question   Question  @relation(fields: [questionId], references: [id])
+}
+
+// ----------------- ENUMS -----------------
 enum Role {
   STUDENT
   TEACHER
   ADMIN
+}
+
+enum QuestionType {
+  MCQ      // trắc nghiệm chọn đáp án
+  ESSAY    // tự luận
+}
+
+enum AttemptStatus {
+  IN_PROGRESS
+  SUBMITTED
+  GRADED
 }

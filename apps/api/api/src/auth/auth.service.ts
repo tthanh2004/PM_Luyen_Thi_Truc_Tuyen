@@ -1,4 +1,8 @@
-import { Injectable, BadRequestException, UnauthorizedException } from '@nestjs/common';
+import {
+  Injectable,
+  BadRequestException,
+  UnauthorizedException,
+} from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import * as bcrypt from 'bcrypt';
 import { JwtService } from '@nestjs/jwt';
@@ -11,46 +15,52 @@ export class AuthService {
     private jwt: JwtService,
   ) {}
 
+  // Đăng ký tài khoản mới
   async register(data: RegisterDto) {
     const { email, password, fullName } = data;
 
-    // check tồn tại email
+    // Check email tồn tại chưa
     const existing = await this.prisma.user.findUnique({
       where: { email },
     });
     if (existing) {
-      throw new BadRequestException('Email already registered');
+      throw new BadRequestException('Email đã được sử dụng');
     }
 
-    // hash password
+    // Hash password
     const hash = await bcrypt.hash(password, 10);
 
-    // tạo user
+    // Tạo user
     const user = await this.prisma.user.create({
       data: {
         email,
         password: hash,
         fullName,
-        role: 'STUDENT', // mặc định sinh viên
-      },
-      select: {
-        id: true,
-        email: true,
-        fullName: true,
-        role: true,
-        createdAt: true,
+        role: 'STUDENT', // mặc định
       },
     });
 
-    // tạo token
-    const token = await this.signToken(user.id, user.email, user.role);
+    // Tạo JWT
+    const accessToken = await this.signToken({
+      userId: user.id,
+      email: user.email,
+      role: user.role,
+    });
 
+    // Trả về (ẩn password)
     return {
-      user,
-      accessToken: token,
+      user: {
+        id: user.id,
+        email: user.email,
+        fullName: user.fullName,
+        role: user.role,
+        createdAt: user.createdAt,
+      },
+      accessToken,
     };
   }
 
+  // Đăng nhập
   async login(data: LoginDto) {
     const { email, password } = data;
 
@@ -59,15 +69,20 @@ export class AuthService {
     });
 
     if (!user) {
-      throw new UnauthorizedException('Invalid credentials');
+      throw new UnauthorizedException('Thông tin đăng nhập không hợp lệ');
     }
 
-    const pwMatch = await bcrypt.compare(password, user.password);
-    if (!pwMatch) {
-      throw new UnauthorizedException('Invalid credentials');
+    // So sánh password
+    const match = await bcrypt.compare(password, user.password);
+    if (!match) {
+      throw new UnauthorizedException('Thông tin đăng nhập không hợp lệ');
     }
 
-    const token = await this.signToken(user.id, user.email, user.role);
+    const accessToken = await this.signToken({
+      userId: user.id,
+      email: user.email,
+      role: user.role,
+    });
 
     return {
       user: {
@@ -77,24 +92,32 @@ export class AuthService {
         role: user.role,
         createdAt: user.createdAt,
       },
-      accessToken: token,
+      accessToken,
     };
   }
 
-  async signToken(
-    userId: number,
-    email: string,
-    role: string,
-  ): Promise<string> {
-    const payload = {
+  // Helper tạo JWT
+  private async signToken(params: {
+    userId: number;
+    email: string;
+    role: string;
+  }): Promise<string> {
+    const { userId, email, role } = params;
+
+    // payload đưa vào JWT
+    const payload: Record<string, any> = {
       sub: userId,
       email,
       role,
     };
 
-    return await this.jwt.signAsync(payload, {
-      secret: process.env.JWT_SECRET,
-      expiresIn: process.env.JWT_EXPIRES_IN || '30m',
-    });
+    // options khi ký JWT
+    const options: any = {
+      secret: process.env.JWT_SECRET ?? 'dev_secret',
+      expiresIn: process.env.JWT_EXPIRES_IN ?? '30m',
+    };
+
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-argument
+    return this.jwt.signAsync(payload, options);
   }
 }
