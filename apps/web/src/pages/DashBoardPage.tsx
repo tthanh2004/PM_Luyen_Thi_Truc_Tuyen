@@ -50,13 +50,6 @@ export default function DashboardPage() {
 
   const loggedInUI = (
     <>
-      <p>Đăng nhập thành công 🎉</p>
-
-      <div style={styles.tokenBox}>
-        <div>Access Token:</div>
-        <code style={styles.code}>{token}</code>
-      </div>
-
       <h3>Danh sách đề thi có sẵn</h3>
       {loading ? (
         <p>Đang tải đề thi...</p>

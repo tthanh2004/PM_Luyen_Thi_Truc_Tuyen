@@ -7,6 +7,15 @@ const api = axios.create({
   },
 });
 
+api.interceptors.request.use((config) => {
+  const token = localStorage.getItem('access_token');
+  if (token) {
+    config.headers = config.headers ?? {};
+    config.headers.Authorization = `Bearer ${token}`;
+  }
+  return config;
+})
+
 // Gọi API đăng ký
 export async function registerUser(data: {
   email: string;
@@ -35,6 +44,25 @@ export async function fetchExams() {
 export async function fetchExamQuestions(examId: number) {
   const res = await api.get(`/questions/exam/${examId}`);
   return res.data; // { exam, questions: [...] }
+}
+
+
+
+export async function startAttempt(examId: number) {
+  const res = await api.post('/attempts/start', {
+    examId,
+  });
+  return res.data;
+}
+export async function submitAttempt(
+  attemptId: number,
+  answers: Array<{ questionId: number; selectedOptionId: number }>,
+) {
+  const res = await api.post('/attempts/submit', {
+    attemptId,
+    answers,
+  });
+  return res.data;
 }
 
 export default api;
