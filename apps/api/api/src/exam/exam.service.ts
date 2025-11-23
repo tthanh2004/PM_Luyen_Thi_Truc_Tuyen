@@ -1,15 +1,33 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import {
+  Injectable,
+  NotFoundException,
+  BadRequestException,
+} from '@nestjs/common'; // <--- Đã thêm BadRequestException
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateExamDto } from './dto/create-exam.dto';
 import { UpdateExamDto } from './dto/update-exam.dto';
+import { QuestionType } from '@prisma/client';
+
+// --- 1. SỬA LỖI IMPORT PDF ---
+// Dùng require để tránh lỗi "expression is not callable" với thư viện cũ
+
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const pdf = require('pdf-parse');
+
+// --- 2. KHAI BÁO INTERFACE (Fix lỗi TempQuestion) ---
+export interface TempQuestion {
+  content: string;
+  type: string;
+  options: { text: string; isCorrect: boolean }[];
+}
 
 @Injectable()
 export class ExamService {
   constructor(private prisma: PrismaService) {}
 
-  // Lấy danh sách đề thi (metadata)
+  // 1. Lấy danh sách
   async getAllExams() {
-    const exams = await this.prisma.exam.findMany({
+    return await this.prisma.exam.findMany({
       orderBy: { createdAt: 'desc' },
       select: {
         id: true,
@@ -19,109 +37,133 @@ export class ExamService {
         createdAt: true,
       },
     });
-
-    return exams;
   }
 
-  // Lấy chi tiết 1 đề thi (kèm câu hỏi+options)
+  // 2. Lấy chi tiết
   async getExamById(id: number) {
     const exam = await this.prisma.exam.findUnique({
       where: { id },
-      select: {
-        id: true,
-        title: true,
-        description: true,
-        durationMin: true,
-        createdAt: true,
+      include: {
         questions: {
           orderBy: { id: 'asc' },
-          select: {
-            id: true,
-            content: true,
-            type: true,
-            options: {
-              select: {
-                id: true,
-                text: true,
-                isCorrect: true,
-              },
-            },
+          include: {
+            options: true,
           },
         },
       },
     });
 
-    if (!exam) {
-      throw new NotFoundException('Exam not found');
-    }
-
+    if (!exam) throw new NotFoundException('Exam not found');
     return exam;
   }
 
-  // Tạo đề thi mới
-  async createExam(dto: CreateExamDto) {
-    const { title, description, durationMin, createdById } = dto;
+  // 3. TẠO ĐỀ THI
+  async createExam(dto: CreateExamDto, userId: number) {
+    const { title, durationMin, questions } = dto;
 
-    const exam = await this.prisma.exam.create({
+    return await this.prisma.exam.create({
       data: {
         title,
-        description,
         durationMin,
-        createdById,
+        createdBy: {
+          connect: { id: userId },
+        },
+        questions: {
+          create: questions.map((q) => ({
+            content: q.content,
+            type: q.type as QuestionType,
+            options: {
+              create: q.options.map((opt) => ({
+                text: opt.text,
+                isCorrect: opt.isCorrect,
+              })),
+            },
+          })),
+        },
       },
-      select: {
-        id: true,
-        title: true,
-        description: true,
-        durationMin: true,
-        createdAt: true,
+      include: {
+        questions: {
+          include: { options: true },
+        },
       },
     });
-
-    return exam;
   }
 
-  // Cập nhật đề thi
+  // 4. CẬP NHẬT ĐỀ THI
   async updateExam(id: number, dto: UpdateExamDto) {
-    // check tồn tại trước
-    const exists = await this.prisma.exam.findUnique({
-      where: { id },
-      select: { id: true },
-    });
-    if (!exists) {
-      throw new NotFoundException('Exam not found');
-    }
+    const { title, durationMin, questions } = dto;
 
-    const updated = await this.prisma.exam.update({
-      where: { id },
-      data: dto,
-      select: {
-        id: true,
-        title: true,
-        description: true,
-        durationMin: true,
-        createdAt: true,
-      },
-    });
+    return await this.prisma.$transaction(async (tx) => {
+      // 1. Cập nhật thông tin chung
+      const updatedExam = await tx.exam.update({
+        where: { id },
+        data: { title, durationMin },
+      });
 
-    return updated;
+      // 2. Nếu có thay đổi câu hỏi
+      if (questions && questions.length > 0) {
+        // A. Lấy danh sách lượt thi cũ
+        const oldAttempts = await tx.attempt.findMany({
+          where: { examId: id },
+          select: { id: true },
+        });
+        const oldAttemptIds = oldAttempts.map((a) => a.id);
+
+        // B. Xóa sạch câu trả lời liên quan
+        if (oldAttemptIds.length > 0) {
+          await tx.answer.deleteMany({
+            where: { attemptId: { in: oldAttemptIds } },
+          });
+          await tx.attempt.deleteMany({
+            where: { id: { in: oldAttemptIds } },
+          });
+        }
+
+        // D. Lấy danh sách câu hỏi cũ
+        const oldQuestions = await tx.question.findMany({
+          where: { examId: id },
+          select: { id: true },
+        });
+        const oldQuestionIds = oldQuestions.map((q) => q.id);
+
+        // E. Xóa Options cũ
+        if (oldQuestionIds.length > 0) {
+          await tx.option.deleteMany({
+            where: { questionId: { in: oldQuestionIds } },
+          });
+        }
+
+        // F. Cuối cùng: Xóa Questions cũ
+        await tx.question.deleteMany({
+          where: { examId: id },
+        });
+
+        // 3. Tạo câu hỏi mới
+        for (const q of questions) {
+          await tx.question.create({
+            data: {
+              examId: id,
+              content: q.content,
+              type: q.type as QuestionType,
+              options: {
+                create: q.options.map((opt) => ({
+                  text: opt.text,
+                  isCorrect: opt.isCorrect,
+                })),
+              },
+            },
+          });
+        }
+      }
+      return updatedExam;
+    });
   }
 
-  // Xóa đề thi (kèm dữ liệu liên quan) ✅
+  // 5. Xóa đề thi
   async deleteExam(id: number) {
-    // 1. Kiểm tra exam có tồn tại không
-    const exam = await this.prisma.exam.findUnique({
-      where: { id },
-      select: { id: true },
-    });
+    const exam = await this.prisma.exam.findUnique({ where: { id } });
+    if (!exam) throw new NotFoundException('Exam not found');
 
-    if (!exam) {
-      throw new NotFoundException('Exam not found');
-    }
-
-    // 2. Xóa dữ liệu con theo thứ tự an toàn
-
-    // 2.1 Tìm toàn bộ câu hỏi thuộc đề này
     const questions = await this.prisma.question.findMany({
       where: { examId: id },
       select: { id: true },
@@ -129,28 +171,17 @@ export class ExamService {
     const questionIds = questions.map((q) => q.id);
 
     if (questionIds.length > 0) {
-      // 2.2 Xóa đáp án học viên (Answer) liên quan tới các câu hỏi đó
       await this.prisma.answer.deleteMany({
-        where: {
-          questionId: { in: questionIds },
-        },
+        where: { questionId: { in: questionIds } },
       });
-
-      // 2.3 Xóa phương án lựa chọn (Option) của các câu hỏi đó
       await this.prisma.option.deleteMany({
-        where: {
-          questionId: { in: questionIds },
-        },
+        where: { questionId: { in: questionIds } },
       });
-
-      // 2.4 Xóa chính các câu hỏi
       await this.prisma.question.deleteMany({
         where: { id: { in: questionIds } },
       });
     }
 
-    // 2.5 Xóa các attempt (bài làm) liên quan tới exam này
-    // - trước tiên xóa Answer theo attempt (phòng trường hợp answer trỏ qua attempt)
     const attempts = await this.prisma.attempt.findMany({
       where: { examId: id },
       select: { id: true },
@@ -159,23 +190,105 @@ export class ExamService {
 
     if (attemptIds.length > 0) {
       await this.prisma.answer.deleteMany({
-        where: {
-          attemptId: { in: attemptIds },
-        },
+        where: { attemptId: { in: attemptIds } },
       });
-
       await this.prisma.attempt.deleteMany({
-        where: {
-          id: { in: attemptIds },
-        },
+        where: { id: { in: attemptIds } },
       });
     }
 
-    // 3. Cuối cùng xóa exam
-    await this.prisma.exam.delete({
-      where: { id },
-    });
+    await this.prisma.exam.delete({ where: { id } });
 
-    return { success: true };
+    return { success: true, message: 'Deleted successfully' };
+  }
+
+  async parseExamFromPdf(fileBuffer: Buffer) {
+    try {
+      const data = await pdf(fileBuffer);
+      const text = data.text;
+      return this.extractQuestionsFromText(text);
+    } catch (error) {
+      console.error(error);
+      throw new BadRequestException('Không thể đọc file PDF');
+    }
+  }
+
+  private extractQuestionsFromText(text: string) {
+    // Chuẩn hóa xuống dòng
+    const cleanText = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+    const lines = cleanText.split('\n');
+
+    const questions: TempQuestion[] = [];
+
+    // FIX LỖI TYPE: Khai báo rõ kiểu hoặc null
+    let currentQuestion: TempQuestion | null = null;
+
+    // --- 3. SỬA REGEX (Fix lỗi unnecessary escape) ---
+    // Bỏ dấu \ trước dấu . và : trong []
+    const questionStartRegex = /^(Câu|Bài|Question)?\s*\d+[.:]\s*(.*)/i;
+
+    // Bỏ dấu \ trước dấu . ) : trong []
+    const optionRegex = /([A-D])\s*[.):]\s*(.*?)(?=\s+[A-D]\s*[.):]|$)/g;
+
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i].trim();
+      if (!line) continue;
+
+      // 1. Kiểm tra câu hỏi mới
+      const qMatch = line.match(questionStartRegex);
+      if (qMatch) {
+        if (currentQuestion) {
+          questions.push(currentQuestion);
+        }
+
+        // Khởi tạo object mới
+        currentQuestion = {
+          content: qMatch[2] || 'Nội dung câu hỏi...',
+          type: 'MCQ',
+          options: [],
+        };
+        continue;
+      }
+
+      // 2. Kiểm tra đáp án (Chỉ chạy khi currentQuestion KHÔNG null)
+      if (currentQuestion) {
+        const optionsInLine = [...line.matchAll(optionRegex)];
+
+        if (optionsInLine.length > 0) {
+          optionsInLine.forEach((match) => {
+            let rawText = match[2].trim();
+            let isCorrect = false;
+
+            // Logic tìm dấu hiệu đúng
+            if (rawText.startsWith('*')) {
+              isCorrect = true;
+              rawText = rawText.substring(1).trim();
+            }
+            const correctSuffixRegex = /\((True|Đúng|Correct)\)$/i;
+            if (correctSuffixRegex.test(rawText)) {
+              isCorrect = true;
+              rawText = rawText.replace(correctSuffixRegex, '').trim();
+            }
+
+            // TypeScript giờ đã hiểu currentQuestion không null ở đây
+            currentQuestion!.options.push({
+              text: rawText,
+              isCorrect: isCorrect,
+            });
+          });
+        } else {
+          // Nối dòng cho câu hỏi dài
+          if (currentQuestion.options.length === 0) {
+            currentQuestion.content += ' ' + line;
+          }
+        }
+      }
+    }
+
+    if (currentQuestion) {
+      questions.push(currentQuestion);
+    }
+
+    return questions;
   }
 }

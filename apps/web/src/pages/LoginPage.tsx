@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { loginUser } from '../api';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../hooks/useAuth';
+import { AxiosError } from 'axios'; // Đã được sử dụng bên dưới
 
 export default function LoginPage() {
   const navigate = useNavigate();
@@ -22,16 +23,36 @@ export default function LoginPage() {
         password,
       });
 
-      // result = { user, accessToken }
-      saveToken(result.accessToken);
+      // 1. Kiểm tra xem Backend trả về tên gì
+      console.log('Log kết quả login:', result);
 
+      // 2. Lấy token (Ưu tiên cả 2 trường hợp)
+      const token = result.accessToken || result.access_token;
+
+      if (token) {
+        // CHỌN TÊN LÀ: 'access_token'
+        localStorage.setItem('access_token', token); 
+      }
+
+      // 3. Lưu cứng vào LocalStorage
+      localStorage.setItem('access_token', token);
+
+      if (saveToken) saveToken(token);
+
+      alert('Đăng nhập thành công!');
       navigate('/dashboard');
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    } catch (err: any) {
+
+    } catch (err: unknown) { // SỬA 1: Dùng unknown thay vì any
+      console.error(err);
+
+      // SỬA 2: Sử dụng AxiosError để ép kiểu (Fix lỗi unused vars)
+      const error = err as AxiosError<{ message: string }>;
+
       const msg =
-        err?.response?.data?.message ||
-        err?.message ||
+        error.response?.data?.message ||
+        error.message ||
         'Đăng nhập thất bại';
+      
       setError(msg);
     }
   }

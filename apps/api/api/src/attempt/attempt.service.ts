@@ -7,28 +7,21 @@ import { SubmitAttemptDto } from './dto/submit-attempt.dto';
 export class AttemptService {
   constructor(private prisma: PrismaService) {}
 
-  // 🟢 1. Bắt đầu bài thi
   async startAttempt(userId: number, dto: StartAttemptDto) {
-    const exam = await this.prisma.exam.findUnique({
-      where: { id: dto.examId },
-    });
-    if (!exam) throw new NotFoundException('Exam not found');
-
-    const attempt = await this.prisma.attempt.create({
+    return this.prisma.attempt.create({
       data: {
+        userId: userId, // Lưu ID người làm bài
         examId: dto.examId,
-        userId,
+        startedAt: new Date(),
       },
-      select: { id: true, examId: true, status: true, startedAt: true },
     });
-
-    return attempt;
   }
 
-  // 🟢 2. Nộp bài & chấm điểm
   async submitAttempt(userId: number, dto: SubmitAttemptDto) {
+    const { attemptId, answers } = dto;
+
     const attempt = await this.prisma.attempt.findUnique({
-      where: { id: dto.attemptId },
+      where: { id: attemptId },
       include: { exam: true },
     });
 
@@ -39,7 +32,7 @@ export class AttemptService {
     let total = 0;
     let correct = 0;
 
-    for (const ans of dto.answers) {
+    for (const ans of answers) {
       const option = await this.prisma.option.findUnique({
         where: { id: ans.selectedOptionId },
       });
@@ -49,7 +42,7 @@ export class AttemptService {
 
       await this.prisma.answer.create({
         data: {
-          attemptId: dto.attemptId,
+          attemptId,
           questionId: ans.questionId,
           selectedOptionId: ans.selectedOptionId,
           isCorrect,
@@ -64,7 +57,7 @@ export class AttemptService {
     const finalScore = (correct / total) * 10;
 
     await this.prisma.attempt.update({
-      where: { id: dto.attemptId },
+      where: { id: attemptId },
       data: {
         score: finalScore,
         status: 'GRADED',
@@ -72,6 +65,6 @@ export class AttemptService {
       },
     });
 
-    return { attemptId: dto.attemptId, score: finalScore };
+    return { attemptId, score: finalScore };
   }
 }

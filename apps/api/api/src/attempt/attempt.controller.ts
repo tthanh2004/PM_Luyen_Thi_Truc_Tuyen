@@ -1,4 +1,5 @@
-import { Controller, Post, Body, Req } from '@nestjs/common';
+import { Controller, Post, Body, UseGuards, Request } from '@nestjs/common';
+import { AuthGuard } from '@nestjs/passport'; // Dùng trực tiếp cái này cho gọn
 import { AttemptService } from './attempt.service';
 import { StartAttemptDto } from './dto/start-attempt.dto';
 import { SubmitAttemptDto } from './dto/submit-attempt.dto';
@@ -7,17 +8,20 @@ import { SubmitAttemptDto } from './dto/submit-attempt.dto';
 export class AttemptController {
   constructor(private readonly attemptService: AttemptService) {}
 
-  // 🟢 Bắt đầu bài thi
+  // SỬA 1: Dùng AuthGuard('jwt') thay vì JwtAuthGuard (trừ khi bạn đã tạo file riêng)
+  @UseGuards(AuthGuard('jwt'))
   @Post('start')
-  async start(@Req() req, @Body() dto: StartAttemptDto) {
-    const userId = 2; // tạm hardcode, sau này lấy từ JWT
-    return this.attemptService.startAttempt(userId, dto);
+  async startAttempt(@Request() req, @Body() body: StartAttemptDto) {
+    // SỬA 2: req.user.id (Theo JwtStrategy mới) thay vì req.user.userId
+    const userId = req.user.id;
+    return this.attemptService.startAttempt(userId, body); // Truyền đúng userId xuống
   }
 
-  // 🟢 Nộp bài
+  @UseGuards(AuthGuard('jwt'))
   @Post('submit')
-  async submit(@Req() req, @Body() dto: SubmitAttemptDto) {
-    const userId = 2; // tạm hardcode
-    return this.attemptService.submitAttempt(userId, dto);
+  async submitAttempt(@Request() req, @Body() body: SubmitAttemptDto) {
+    // SỬA 3: Tương tự ở trên
+    const userId = req.user.id;
+    return this.attemptService.submitAttempt(userId, body);
   }
 }
